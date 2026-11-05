@@ -53,6 +53,10 @@ Once your own account exists, go to **Authentication → Sign In / Providers** a
 
 > Supabase's built-in email sender is rate-limited (a few emails per hour) and meant for testing. For daily use, set up custom SMTP (for example Resend or Postmark) under **Authentication → Emails → SMTP Settings**.
 
+## Demo link (for sharing)
+
+`https://<your-site>/demo` opens the app with example brands, no sign-in. Each visitor's changes stay in their own browser. The demo never connects to Supabase, so your real desk stays private. Share this link, not the main one.
+
 ## Install on your phone
 
 - **iPhone (Safari):** open the site → Share → **Add to Home Screen**.

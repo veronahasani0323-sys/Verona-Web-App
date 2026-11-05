@@ -253,7 +253,7 @@ legend { font-family: var(--display); font-weight: 700; font-size: 15px; margin-
 <div id="editor" hidden></div>
 <div class="toast" id="toast" hidden></div>
 
-<script src="config.js"></script>
+<script src="/config.js"></script>
 <script>
 const STAGES = ["Prospect","Contacted","Responded","Interested","Negotiating","Confirmed","Contracted","Content production","Posted","Reporting","Payment completed","Closed: no deal"];
 const SOURCES = ["Manager-generated","Inbound to creator","Existing brand relationship","Agency introduction"];
@@ -561,17 +561,17 @@ render();
 // browser's localStorage. It mimics the small slice of the db API used above.
 const LOCAL_KEY = "pd.partnerships.v1";
 const LOCAL_MSG = "Standalone mode: partnerships are saved in this browser only. They won't sync to other devices or people, and clearing site data deletes them.";
-function localDb() {
+function localDb(key = LOCAL_KEY) {
   const listeners = new Set();
-  const read = () => { try { return JSON.parse(localStorage.getItem(LOCAL_KEY)) || {}; } catch { return {}; } };
+  const read = () => { try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; } };
   const snap = () => ({ docs: Object.entries(read()).map(([id, d]) => ({ id, data: () => d })), metadata: { fromCache: false } });
   const emit = () => { const s = snap(); listeners.forEach(fn => fn(s)); };
   const write = all => {
-    try { localStorage.setItem(LOCAL_KEY, JSON.stringify(all)); }
+    try { localStorage.setItem(key, JSON.stringify(all)); }
     catch { throw { code: "storage", message: "this browser is blocking local storage" }; }
     emit();
   };
-  window.addEventListener("storage", e => { if (e.key === LOCAL_KEY) emit(); }); // keep other tabs in sync
+  window.addEventListener("storage", e => { if (e.key === key) emit(); }); // keep other tabs in sync
   const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const col = {
     onSnapshot(fn) { listeners.add(fn); fn(snap()); return () => listeners.delete(fn); },
@@ -582,6 +582,26 @@ function localDb() {
     }),
   };
   return { collection: () => col };
+}
+
+// ---------- demo mode (/demo or ?demo) ----------
+// A shareable try-out: sample brands, saved only in the visitor's browser, never touches the real desk.
+const DEMO = /^\/demo\/?$/.test(location.pathname) || new URLSearchParams(location.search).has("demo");
+const DEMO_KEY = "pd.demo.v1";
+const DEMO_MSG = "Demo: these are example brands. Anything you change stays in your own browser and nobody else sees it.";
+function seedDemo() {
+  try { if (localStorage.getItem(DEMO_KEY)) return; } catch { return; }
+  const ago = n => { const d = new Date(today); d.setDate(d.getDate() - n); return iso(d); };
+  const rows = [
+    { brand: "Lumen Skin", creator: "Ana", opportunity: "Serum launch, paid Reel", market: "DE", priority: "A", stage: "Negotiating", source: "Manager-generated", contactName: "Lea", contact: "Influencer lead", pitchSent: ago(20), lastContact: ago(9), replied: "Yes", nextAction: "Counter at €1,800 with usage capped at 3 months", fee: 1800, payment: "Not invoiced" },
+    { brand: "Northfold Coffee", creator: "Ana", opportunity: "Holiday gifting bundle", market: "AT", priority: "B", stage: "Contacted", source: "Manager-generated", contactName: "Jonas", contact: "Brand manager", pitchSent: ago(5), lastContact: ago(5), replied: "No", nextAction: "", payment: "Not invoiced" },
+    { brand: "Kiro Athletics", creator: "Mo", opportunity: "3-month ambassador", market: "EU", priority: "A", stage: "Content production", source: "Inbound to creator", contactName: "Sara", contact: "Partnerships", lastContact: ago(2), replied: "Yes", nextAction: "Remind Mo: first video due Friday", followUpDate: iso(addWorkdays(today, 3)), deliverables: "3 TikToks, 6 Stories", usage: "Organic only, 6 months", fee: 4200, payment: "Not invoiced" },
+    { brand: "Pocket Atlas App", creator: "Mo", opportunity: "App install campaign", market: "UK", priority: "B", stage: "Posted", source: "Agency introduction", contactName: "Tom", contact: "Agency", lastContact: ago(12), replied: "Yes", nextAction: "Send results and pitch a second wave", deliverables: "1 YouTube integration", fee: 2500, payment: "Overdue" },
+    { brand: "Mira Jewelry", creator: "Ana", opportunity: "Valentine's capsule", market: "DE", priority: "C", stage: "Prospect", source: "Manager-generated", nextAction: "Find the PR contact on LinkedIn", payment: "Not invoiced" },
+    { brand: "Velvet Room Hotels", creator: "Mo", opportunity: "City weekend stay", market: "IT", stage: "Payment completed", source: "Existing brand relationship", lastContact: ago(30), replied: "Yes", nextAction: "Rebook for spring", fee: 1200, payment: "Paid" },
+  ];
+  const all = {}; rows.forEach((r, i) => { all["demo" + (i + 1)] = r; });
+  try { localStorage.setItem(DEMO_KEY, JSON.stringify(all)); } catch {}
 }
 
 // ---------- hosted storage: Supabase ----------
@@ -665,11 +685,11 @@ async function startSupabase(cfg) {
 }
 
 function startDesk(mode) {
-  const timer = mode === "local" ? null : setTimeout(() => notice("Your partnerships are taking a while to load. They'll appear here once the connection catches up."), 10000);
+  const timer = mode === "local" || mode === "demo" ? null : setTimeout(() => notice("Your partnerships are taking a while to load. They'll appear here once the connection catches up."), 10000);
   db.collection("partnerships").onSnapshot(snap => {
     rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     loaded = true;
-    if (!snap.metadata.fromCache) { clearTimeout(timer); notice(mode === "local" ? LOCAL_MSG : ""); }
+    if (!snap.metadata.fromCache) { clearTimeout(timer); notice(mode === "demo" ? DEMO_MSG : mode === "local" ? LOCAL_MSG : ""); }
     render();
   }, e => {
     clearTimeout(timer); loaded = true;
@@ -678,8 +698,9 @@ function startDesk(mode) {
   });
 }
 
-// Storage priority: claude.ai Artifact database, then Supabase (if configured), then this browser.
+// Storage priority: demo link, claude.ai Artifact database, Supabase (if configured), then this browser.
 (async () => {
+  if (DEMO) { seedDemo(); db = localDb(DEMO_KEY); return startDesk("demo"); }
   let shared = null;
   try { shared = await window.claude?.use?.("db"); } catch {}
   if (shared) {
