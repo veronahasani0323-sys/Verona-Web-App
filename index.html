@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Partnership Desk</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#6a2c70">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Partnerships">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -48,7 +56,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5; }
-.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
 h1, h2 { font-family: var(--display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
 h1 { font-size: clamp(26px, 4vw, 34px); }
 h2 { font-size: 19px; }
@@ -165,12 +173,13 @@ legend { font-family: var(--display); font-weight: 700; font-size: 15px; margin-
 /* account + sign-in (hosted mode) */
 .head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .acct { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-#desk { display: grid; gap: 28px; }
+#desk { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
 .auth { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; max-width: 480px; display: grid; gap: 12px; }
 .auth p { margin: 0; color: var(--muted); }
 .auth form { display: flex; flex-wrap: wrap; gap: 8px; }
 .auth input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 12px; }
 .auth .msg { font-size: 13px; }
+.auth #code-form input { letter-spacing: 0.3em; font-family: var(--mono); }
 .auth .msg.bad { color: var(--bad); }
 .auth .msg.good { color: var(--good); }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 30; }
@@ -197,10 +206,14 @@ legend { font-family: var(--display); font-weight: 700; font-size: 15px; margin-
 
   <section class="auth" id="auth" hidden aria-labelledby="auth-h">
     <h2 id="auth-h">Sign in to your desk</h2>
-    <p>Enter your email and we'll send you a sign-in link. Your partnerships are private to your account and sync across your devices.</p>
+    <p>Enter your email and we'll send you a sign-in link and code. Your partnerships are private to your account and sync across your devices.</p>
     <form id="auth-form">
       <input type="email" id="auth-email" required autocomplete="email" placeholder="you@example.com" aria-label="Email">
       <button class="btn primary" type="submit">Email me a link</button>
+    </form>
+    <form id="code-form" hidden>
+      <input type="text" id="auth-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" required placeholder="123456" aria-label="Sign-in code">
+      <button class="btn primary" type="submit">Sign in</button>
     </form>
     <div class="msg" id="auth-msg" role="status"></div>
   </section>
@@ -628,13 +641,26 @@ async function startSupabase(cfg) {
   // Signed out: show the sign-in card instead of the desk.
   desk.hidden = true; auth.hidden = false; document.getElementById("new-btn").hidden = true;
   const msg = document.getElementById("auth-msg");
+  const codeForm = document.getElementById("code-form");
+  let email = "";
   document.getElementById("auth-form").addEventListener("submit", async e => {
     e.preventDefault();
+    email = document.getElementById("auth-email").value.trim();
     const btn = e.target.querySelector("button"); btn.disabled = true; msg.className = "msg"; msg.textContent = "Sending…";
-    const { error } = await sb.auth.signInWithOtp({ email: document.getElementById("auth-email").value.trim(), options: { emailRedirectTo: location.origin + location.pathname } });
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: false } });
     btn.disabled = false;
-    if (error) { msg.className = "msg bad"; msg.textContent = "Couldn't send the link: " + error.message; }
-    else { msg.className = "msg good"; msg.textContent = "Check your inbox and open the link on any device. You can close this tab."; }
+    if (error) { msg.className = "msg bad"; msg.textContent = "Couldn't send the email: " + error.message; return; }
+    codeForm.hidden = false; document.getElementById("auth-code").focus();
+    msg.className = "msg good"; msg.textContent = "Check your inbox. Type the code from the email here, or tap the link in it.";
+  });
+  // A code keeps sign-in inside an installed home-screen app; email links open in the browser instead.
+  codeForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    const btn = e.target.querySelector("button"); btn.disabled = true; msg.className = "msg"; msg.textContent = "Checking…";
+    const token = document.getElementById("auth-code").value.replace(/\s/g, "");
+    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+    btn.disabled = false;
+    if (error) { msg.className = "msg bad"; msg.textContent = "That code didn't work: " + error.message + ". Request a new email if it has expired."; }
   });
 }
 
