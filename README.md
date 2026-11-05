@@ -13,6 +13,7 @@ It's written in plain HTML, CSS and JavaScript (`index.html`). There's no framew
 | `scripts/build.mjs` | Vercel build step: copies the app to `dist/` and writes `config.js` from env vars (Node built-ins only) |
 | `vercel.json` | Vercel settings: build command, output folder, security headers |
 | `supabase/schema.sql` | Database table and row level security policies |
+| `manifest.webmanifest`, `icons/` | Lets phones install the app on the home screen with its own icon |
 
 ## How data is saved
 
@@ -51,6 +52,19 @@ Then open the site, enter your email, and click the link.
 Once your own account exists, go to **Authentication → Sign In / Providers** and turn off **Allow new users to sign up**. Row level security already keeps strangers away from your data. Turning sign-ups off also stops them from creating accounts on your project.
 
 > Supabase's built-in email sender is rate-limited (a few emails per hour) and meant for testing. For daily use, set up custom SMTP (for example Resend or Postmark) under **Authentication → Emails → SMTP Settings**.
+
+## Demo link (for sharing)
+
+`https://<your-site>/demo` opens the app with example brands, no sign-in. Each visitor's changes stay in their own browser. The demo never connects to Supabase, so your real desk stays private. Share this link, not the main one.
+
+## Install on your phone
+
+- **iPhone (Safari):** open the site → Share → **Add to Home Screen**.
+- **Android (Chrome):** open the site → ⋮ menu → **Install app** (or **Add to Home screen**).
+
+The installed app opens full screen with its own icon. It keeps its own sign-in separate from the browser, so sign in once inside it. Use the **6-digit code** from the email, because email links open in the browser instead of the installed app.
+
+For the email to contain a code, the Supabase **Magic Link** template (Authentication → Emails) must include `{{ .Token }}`.
 
 ## Run locally
 
