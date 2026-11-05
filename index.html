@@ -46,6 +46,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5; }
 .wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
 h1, h2 { font-family: var(--display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
@@ -161,6 +162,17 @@ legend { font-family: var(--display); font-weight: 700; font-size: 15px; margin-
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; position: sticky; bottom: 0; background: var(--bg); padding-top: 10px; border-top: 1px solid var(--line); }
 .actions .r { display: flex; gap: 8px; }
 .err { color: var(--bad); font-size: 13px; }
+/* account + sign-in (hosted mode) */
+.head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.acct { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+#desk { display: grid; gap: 28px; }
+.auth { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; max-width: 480px; display: grid; gap: 12px; }
+.auth p { margin: 0; color: var(--muted); }
+.auth form { display: flex; flex-wrap: wrap; gap: 8px; }
+.auth input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 12px; }
+.auth .msg { font-size: 13px; }
+.auth .msg.bad { color: var(--bad); }
+.auth .msg.good { color: var(--good); }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 30; }
 @media (prefers-reduced-motion: no-preference) { .panel { animation: slide .18s ease-out; } @keyframes slide { from { transform: translateX(24px); opacity: .6; } } }
 </style>
@@ -174,11 +186,26 @@ legend { font-family: var(--display); font-weight: 700; font-size: 15px; margin-
       <h1>Partnership Desk</h1>
       <p>Every brand conversation in one place. Follow-ups fall due four working days after the last contact, as in the sprint playbook.</p>
     </div>
-    <button class="btn primary" id="new-btn" type="button">New partnership</button>
+    <div class="head-actions">
+      <span class="acct" id="acct" hidden></span>
+      <button class="btn" id="signout-btn" type="button" hidden>Sign out</button>
+      <button class="btn primary" id="new-btn" type="button">New partnership</button>
+    </div>
   </header>
 
   <div class="notice" id="notice" hidden></div>
 
+  <section class="auth" id="auth" hidden aria-labelledby="auth-h">
+    <h2 id="auth-h">Sign in to your desk</h2>
+    <p>Enter your email and we'll send you a sign-in link. Your partnerships are private to your account and sync across your devices.</p>
+    <form id="auth-form">
+      <input type="email" id="auth-email" required autocomplete="email" placeholder="you@example.com" aria-label="Email">
+      <button class="btn primary" type="submit">Email me a link</button>
+    </form>
+    <div class="msg" id="auth-msg" role="status"></div>
+  </section>
+
+  <div id="desk">
   <section class="stats" aria-label="Summary">
     <div class="stat"><span class="v" id="s-active">–</span><span class="k">Open partnerships</span></div>
     <div class="stat"><span class="v" id="s-live">–</span><span class="k">Live conversations</span></div>
@@ -207,11 +234,13 @@ legend { font-family: var(--display); font-weight: 700; font-size: 15px; margin-
     </div>
     <div id="pipeline"></div>
   </section>
+  </div>
 </div>
 
 <div id="editor" hidden></div>
 <div class="toast" id="toast" hidden></div>
 
+<script src="config.js"></script>
 <script>
 const STAGES = ["Prospect","Contacted","Responded","Interested","Negotiating","Confirmed","Contracted","Content production","Posted","Reporting","Payment completed","Closed: no deal"];
 const SOURCES = ["Manager-generated","Inbound to creator","Existing brand relationship","Agency introduction"];
@@ -542,27 +571,102 @@ function localDb() {
   return { collection: () => col };
 }
 
-(async () => {
-  let shared = null;
-  try { shared = await window.claude?.use?.("db"); } catch {}
-  const local = !shared;
-  db = shared || localDb();
-  if (shared) {
-    const user = await window.claude.use("user");
-    const w = user ? await user.can("data.write") : null;
-    if (w === false) canWrite = false;
+// ---------- hosted storage: Supabase ----------
+// Used when config.js provides a Supabase URL and publishable key (the Vercel build writes it).
+// Each row is { id, owner_id, data jsonb }; row level security limits every query to the signed-in owner.
+const SUPABASE_JS = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js";
+const loadScript = src => new Promise((ok, fail) => { const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = fail; document.head.append(el); });
+function supabaseDb(sb) {
+  const T = "partnerships";
+  const listeners = new Set();
+  const fail = e => { throw { code: e.code || "error", message: e.message || String(e) }; };
+  async function refresh() {
+    const { data, error } = await sb.from(T).select("id, data").order("created_at");
+    if (error) { listeners.forEach(l => l.err && l.err({ code: error.code || "load_failed", message: error.message })); return; }
+    const snap = { docs: data.map(r => ({ id: r.id, data: () => r.data || {} })), metadata: { fromCache: false } };
+    listeners.forEach(l => l.ok(snap));
   }
-  const timer = local ? null : setTimeout(() => notice("Your partnerships are taking a while to load. They'll appear here once the connection catches up."), 10000);
+  // Live updates from other devices; refetching on focus covers dropped connections.
+  sb.channel("pd-partnerships").on("postgres_changes", { event: "*", schema: "public", table: T }, () => refresh()).subscribe();
+  window.addEventListener("focus", () => refresh());
+  const col = {
+    onSnapshot(ok, err) { const l = { ok, err }; listeners.add(l); refresh(); return () => listeners.delete(l); },
+    async add(d) {
+      const { data, error } = await sb.from(T).insert({ data: d }).select("id").single();
+      if (error) fail(error); await refresh(); return { id: data.id };
+    },
+    doc: id => ({
+      async set(d) {
+        const { data, error } = await sb.from(T).update({ data: d, updated_at: new Date().toISOString() }).eq("id", id).select("id");
+        if (error) fail(error); if (!data.length) fail({ code: "not_found", message: "this partnership no longer exists" });
+        await refresh();
+      },
+      async delete() { const { error } = await sb.from(T).delete().eq("id", id); if (error) fail(error); await refresh(); },
+    }),
+  };
+  return { collection: () => col };
+}
+
+async function startSupabase(cfg) {
+  const desk = document.getElementById("desk"), auth = document.getElementById("auth");
+  try { await loadScript(SUPABASE_JS); }
+  catch { loaded = true; canWrite = false; notice("Couldn't load the sign-in library. Check your connection and reload the page."); render(); return; }
+  const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
+  let entered = false;
+  const enter = session => {
+    if (entered) return; entered = true;
+    auth.hidden = true; desk.hidden = false;
+    const acct = document.getElementById("acct"); acct.textContent = session.user.email || ""; acct.hidden = false;
+    const out = document.getElementById("signout-btn"); out.hidden = false;
+    out.onclick = async () => { await sb.auth.signOut(); location.reload(); };
+    db = supabaseDb(sb);
+    startDesk("supabase");
+  };
+  sb.auth.onAuthStateChange((event, session) => { if (session) enter(session); });
+  const { data } = await sb.auth.getSession();
+  if (data.session) return enter(data.session);
+  // Signed out: show the sign-in card instead of the desk.
+  desk.hidden = true; auth.hidden = false; document.getElementById("new-btn").hidden = true;
+  const msg = document.getElementById("auth-msg");
+  document.getElementById("auth-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const btn = e.target.querySelector("button"); btn.disabled = true; msg.className = "msg"; msg.textContent = "Sending…";
+    const { error } = await sb.auth.signInWithOtp({ email: document.getElementById("auth-email").value.trim(), options: { emailRedirectTo: location.origin + location.pathname } });
+    btn.disabled = false;
+    if (error) { msg.className = "msg bad"; msg.textContent = "Couldn't send the link: " + error.message; }
+    else { msg.className = "msg good"; msg.textContent = "Check your inbox and open the link on any device. You can close this tab."; }
+  });
+}
+
+function startDesk(mode) {
+  const timer = mode === "local" ? null : setTimeout(() => notice("Your partnerships are taking a while to load. They'll appear here once the connection catches up."), 10000);
   db.collection("partnerships").onSnapshot(snap => {
     rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     loaded = true;
-    if (!snap.metadata.fromCache) { clearTimeout(timer); notice(local ? LOCAL_MSG : ""); }
+    if (!snap.metadata.fromCache) { clearTimeout(timer); notice(mode === "local" ? LOCAL_MSG : ""); }
     render();
   }, e => {
     clearTimeout(timer); loaded = true;
     notice(e.code === "revoked" ? "This tracker is no longer available in this view." : "Couldn't load partnerships (" + e.code + "). Reload the page to try again.");
     render();
   });
+}
+
+// Storage priority: claude.ai Artifact database, then Supabase (if configured), then this browser.
+(async () => {
+  let shared = null;
+  try { shared = await window.claude?.use?.("db"); } catch {}
+  if (shared) {
+    db = shared;
+    const user = await window.claude.use("user");
+    const w = user ? await user.can("data.write") : null;
+    if (w === false) canWrite = false;
+    return startDesk("claude");
+  }
+  const cfg = window.PD_CONFIG || {};
+  if (cfg.supabaseUrl && cfg.supabaseKey) return startSupabase(cfg);
+  db = localDb();
+  startDesk("local");
 })();
 </script>
 </body>
